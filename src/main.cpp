@@ -56,7 +56,7 @@ struct Config {
 
 Config parseConfig(int argc, char* argv[]) {
     Config config;
-    
+
     // Read from environment variables first
     config.server_port = std::stoi(getEnvVar("SERVER_PORT", "8080"));
     config.db_host = getEnvVar("DB_HOST", "localhost");
@@ -64,11 +64,11 @@ Config parseConfig(int argc, char* argv[]) {
     config.db_name = getEnvVar("DB_NAME", "socialnetwork");
     config.db_user = getEnvVar("DB_USER", "postgres");
     config.db_password = getEnvVar("DB_PASSWORD");
-    
+
     // Parse command line arguments (override environment variables)
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        
+
         if (arg == "--help" || arg == "-h") {
             printUsage(argv[0]);
             exit(0);
@@ -90,7 +90,7 @@ Config parseConfig(int argc, char* argv[]) {
             exit(1);
         }
     }
-    
+
     return config;
 }
 
@@ -100,22 +100,22 @@ std::string buildConnectionString(const Config& config) {
         << " port=" << config.db_port
         << " dbname=" << config.db_name
         << " user=" << config.db_user;
-    
+
     if (!config.db_password.empty()) {
         oss << " password=" << config.db_password;
     }
-    
+
     // Additional connection parameters for better reliability
     oss << " connect_timeout=10"
         << " application_name=social_network"
         << " client_encoding=UTF8";
-    
+
     return oss.str();
 }
 
 void waitForDatabase(const std::string& connection_string, int max_retries = 30, int delay_seconds = 2) {
     std::cout << "Waiting for database to be ready..." << std::endl;
-    
+
     for (int attempt = 1; attempt <= max_retries; ++attempt) {
         try {
             pqxx::connection test_conn(connection_string);
@@ -124,15 +124,15 @@ void waitForDatabase(const std::string& connection_string, int max_retries = 30,
                 return;
             }
         } catch (const std::exception& e) {
-            std::cout << "Attempt " << attempt << "/" << max_retries 
+            std::cout << "Attempt " << attempt << "/" << max_retries
                       << " - Database not ready: " << e.what() << std::endl;
-            
+
             if (attempt < max_retries) {
                 std::this_thread::sleep_for(std::chrono::seconds(delay_seconds));
             }
         }
     }
-    
+
     throw std::runtime_error("Failed to connect to database after " + std::to_string(max_retries) + " attempts");
 }
 
@@ -151,29 +151,29 @@ int main(int argc, char* argv[]) {
         // Parse configuration
         Config config = parseConfig(argc, argv);
         printStartupInfo(config);
-        
+
         // Build database connection string
         std::string connection_string = buildConnectionString(config);
-        
+
         // Wait for database to be ready (useful in Docker environment)
         waitForDatabase(connection_string);
-        
+
         // Initialize database connection
         std::cout << "Initializing database connection..." << std::endl;
         auto database = std::make_shared<Database>(connection_string);
-        
+
         if (!database->isConnected()) {
             throw std::runtime_error("Failed to establish database connection");
         }
-        
+
         // Setup signal handlers for graceful shutdown
         signal(SIGINT, signalHandler);
         signal(SIGTERM, signalHandler);
-        
+
         // Create and configure server
         std::cout << "Creating server..." << std::endl;
         g_server = std::make_unique<Server>(database, config.server_port);
-        
+
         // Start periodic cleanup of expired sessions
         std::thread cleanup_thread([database]() {
             while (true) {
@@ -186,14 +186,14 @@ int main(int argc, char* argv[]) {
             }
         });
         cleanup_thread.detach();
-        
+
         // Start the server (this will block)
         std::cout << "Starting server on port " << config.server_port << "..." << std::endl;
         std::cout << "Server is ready to accept connections!" << std::endl;
         std::cout << "Press Ctrl+C to stop the server\n" << std::endl;
-        
+
         g_server->start();
-        
+
     } catch (const std::invalid_argument& e) {
         std::cerr << "Configuration error: " << e.what() << std::endl;
         printUsage(argv[0]);
@@ -202,7 +202,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
         return 1;
     }
-    
+
     std::cout << "Server shutdown complete" << std::endl;
     return 0;
 }

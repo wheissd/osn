@@ -8,7 +8,7 @@
 
 namespace SocialNetwork {
 
-Server::Server(std::shared_ptr<Database> db, int port) 
+Server::Server(std::shared_ptr<Database> db, int port)
     : db_(db), port_(port) {
     if (!db_) {
         throw std::invalid_argument("Database pointer cannot be null");
@@ -70,42 +70,42 @@ void Server::setupRoutes() {
 
 crow::response Server::handleLogin(const crow::request& req) {
     std::string request_id = generateRequestId();
-    
+
     try {
         auto json_opt = parseJsonRequest(req);
         if (!json_opt) {
             return createErrorResponse(400, "Invalid JSON format", request_id);
         }
-        
+
         nlohmann::json json = *json_opt;
-        
+
         if (!validateLoginRequest(json)) {
             return createErrorResponse(400, "Missing required fields: id, password", request_id);
         }
-        
+
         std::string user_id = json["id"].get<std::string>();
         std::string password = json["password"].get<std::string>();
-        
+
         if (!isValidUUID(user_id)) {
             return createErrorResponse(400, "Invalid user ID format", request_id);
         }
-        
+
         if (password.empty()) {
             return createErrorResponse(400, "Password cannot be empty", request_id);
         }
-        
+
         auto token_opt = db_->authenticateUser(user_id, password);
         if (!token_opt) {
             return createErrorResponse(404, "User not found or invalid credentials", request_id);
         }
-        
+
         nlohmann::json response;
         response["token"] = *token_opt;
-        
+
         auto crow_response = createSuccessResponse(response);
         logResponse(crow_response, "/login", request_id);
         return crow_response;
-        
+
     } catch (const std::exception& e) {
         return handleInternalError(e, request_id);
     }
@@ -113,27 +113,27 @@ crow::response Server::handleLogin(const crow::request& req) {
 
 crow::response Server::handleRegister(const crow::request& req) {
     std::string request_id = generateRequestId();
-    
+
     try {
         auto json_opt = parseJsonRequest(req);
         if (!json_opt) {
             return createErrorResponse(400, "Invalid JSON format", request_id);
         }
-        
+
         nlohmann::json json = *json_opt;
-        
+
         if (!validateRegisterRequest(json)) {
             return createErrorResponse(400, "Missing required fields", request_id);
         }
-        
+
         // Validate birthdate format
         std::string birthdate = json["birthdate"].get<std::string>();
         if (!isValidDateFormat(birthdate)) {
             return createErrorResponse(400, "Invalid birthdate format. Use YYYY-MM-DD", request_id);
         }
-        
+
         User user = User::fromJson(json);
-        
+
         if (!user.isValid()) {
             auto errors = user.getValidationErrors();
             std::string error_message = "Validation errors: ";
@@ -143,21 +143,21 @@ crow::response Server::handleRegister(const crow::request& req) {
             }
             return createErrorResponse(400, error_message, request_id);
         }
-        
+
         std::string password = json["password"].get<std::string>();
         if (password.length() < 6) {
             return createErrorResponse(400, "Password must be at least 6 characters long", request_id);
         }
-        
+
         std::string user_id = db_->createUser(user, password);
-        
+
         nlohmann::json response;
         response["user_id"] = user_id;
-        
+
         auto crow_response = createSuccessResponse(response);
         logResponse(crow_response, "/user/register", request_id);
         return crow_response;
-        
+
     } catch (const std::invalid_argument& e) {
         return createErrorResponse(400, e.what(), request_id);
     } catch (const std::exception& e) {
@@ -167,23 +167,23 @@ crow::response Server::handleRegister(const crow::request& req) {
 
 crow::response Server::handleGetUser(const crow::request& /* req */, const std::string& user_id) {
     std::string request_id = generateRequestId();
-    
+
     try {
         if (!isValidUUID(user_id)) {
             return createErrorResponse(400, "Invalid user ID format", request_id);
         }
-        
+
         auto user_opt = db_->getUser(user_id);
         if (!user_opt) {
             return createErrorResponse(404, "User not found", request_id);
         }
-        
+
         nlohmann::json response = user_opt->toJson();
-        
+
         auto crow_response = createSuccessResponse(response);
         logResponse(crow_response, "/user/get/" + user_id, request_id);
         return crow_response;
-        
+
     } catch (const std::exception& e) {
         return handleInternalError(e, request_id);
     }
@@ -194,17 +194,17 @@ std::optional<std::string> Server::extractBearerToken(const crow::request& req) 
     if (auth_header.empty()) {
         return std::nullopt;
     }
-    
+
     const std::string bearer_prefix = "Bearer ";
     if (auth_header.substr(0, bearer_prefix.length()) != bearer_prefix) {
         return std::nullopt;
     }
-    
+
     std::string token = auth_header.substr(bearer_prefix.length());
     if (token.empty()) {
         return std::nullopt;
     }
-    
+
     return token;
 }
 
@@ -212,11 +212,11 @@ std::optional<std::string> Server::validateAuthToken(const std::string& token) {
     if (token.empty() || !isValidUUID(token)) {
         return std::nullopt;
     }
-    
+
     return db_->validateSession(token);
 }
 
-crow::response Server::createErrorResponse(int status_code, const std::string& message, 
+crow::response Server::createErrorResponse(int status_code, const std::string& message,
                                          const std::string& request_id) {
     nlohmann::json error_json;
     error_json["message"] = message;
@@ -224,7 +224,7 @@ crow::response Server::createErrorResponse(int status_code, const std::string& m
         error_json["request_id"] = request_id;
     }
     error_json["code"] = status_code;
-    
+
     crow::response response(status_code);
     response.set_header("Content-Type", "application/json");
     response.set_header("Access-Control-Allow-Origin", "*");
@@ -244,13 +244,13 @@ std::string Server::generateRequestId() {
     static std::random_device rd;
     static std::mt19937 gen(rd());
     static std::uniform_int_distribution<> dis(0, 15);
-    
+
     std::stringstream ss;
     for (int i = 0; i < 8; ++i) {
         if (i == 4) ss << "-";
         ss << std::hex << dis(gen);
     }
-    
+
     return ss.str();
 }
 
@@ -304,18 +304,18 @@ void Server::logRequest(const crow::request& req, const std::string& endpoint) {
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     auto tm = *std::localtime(&time_t);
-    
+
     std::cout << "[" << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << "] "
-              << methodToString(req.method) << " " << endpoint 
+              << methodToString(req.method) << " " << endpoint
               << " from " << req.remote_ip_address << std::endl;
 }
 
-void Server::logResponse(const crow::response& res, const std::string& endpoint, 
+void Server::logResponse(const crow::response& res, const std::string& endpoint,
                         const std::string& request_id) {
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     auto tm = *std::localtime(&time_t);
-    
+
     std::cout << "[" << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << "] "
               << "Response " << res.code << " for " << endpoint;
     if (!request_id.empty()) {
@@ -334,7 +334,7 @@ crow::response Server::handleInternalError(const std::exception& e, const std::s
         std::cerr << " (request_id: " << request_id << ")";
     }
     std::cerr << std::endl;
-    
+
     return createErrorResponse(500, "Internal server error", request_id);
 }
 
@@ -344,7 +344,7 @@ crow::response Server::handleDatabaseError(const std::string& error, const std::
         std::cerr << " (request_id: " << request_id << ")";
     }
     std::cerr << std::endl;
-    
+
     return createErrorResponse(503, "Service temporarily unavailable", request_id);
 }
 
@@ -353,7 +353,7 @@ std::optional<nlohmann::json> Server::parseJsonRequest(const crow::request& req)
         if (req.body.empty()) {
             return std::nullopt;
         }
-        
+
         return nlohmann::json::parse(req.body);
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "JSON parse error: " << e.what() << std::endl;
