@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: social_network_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: socialnetwork
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - social_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialnetwork"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: social_network_app
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: socialnetwork
+      DB_USER: postgres
+      DB_PASSWORD: postgres_password
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    networks:
+      - social_network
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - ./migrations:/app/migrations
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  social_network:
+    driver: bridge

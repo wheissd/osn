@@ -1,0 +1,155 @@
+# Build directories
+build/
+bin/
+lib/
+out/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Conan generated files
+conandata.txt
+conaninfo.txt
+conanbuildinfo.*
+conan.lock
+.conan/
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+social_network
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Qt-es
+object_script.*.Release
+object_script.*.Debug
+*_plugin_import.cpp
+/.qmake.cache
+/.qmake.stash
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qmlc
+*.jsc
+Makefile*
+*build-*
+*.qm
+*.prl
+
+# IDE files
+.vscode/
+*.code-workspace
+.idea/
+*.iml
+*.iws
+*.ipr
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Database
+postgresql/
+postgres_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Core dumps
+core
+
+# Coverage reports
+*.gcov
+*.gcda
+*.gcno
+coverage.info
+coverage/
+
+# Profiling data
+*.prof
+gmon.out
+
+# Dependency directories
+node_modules/
+vendor/
+
+# Package managers
+*.tar.gz
+*.zip
+
+# Test results
+test_results/
+*.xml
+
+# Temporary files
+temp/
+tmp/
+*.temp
