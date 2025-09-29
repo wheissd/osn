@@ -61,6 +61,13 @@ void Server::setupRoutes() {
         return handleGetUser(req, user_id);
     });
 
+    // User search endpoint
+    CROW_ROUTE(app_, "/user/search").methods("GET"_method)
+    ([this](const crow::request& req) {
+        logRequest(req, "/user/search");
+        return handleSearchUsers(req);
+    });
+
     // CORS preflight handler
     CROW_ROUTE(app_, "/<path>").methods("OPTIONS"_method)
     ([this](const crow::request& /* req */, const std::string& /* path */) {
@@ -371,6 +378,56 @@ bool Server::hasRequiredFields(const nlohmann::json& json, const std::vector<std
         }
     }
     return true;
+}
+
+crow::response Server::handleSearchUsers(const crow::request& req) {
+    std::string request_id = generateRequestId();
+
+    try {
+        auto url_params = crow::query_string(req.url_params);
+
+        std::string first_name;
+        std::string last_name;
+
+        // Extract and validate query parameters first_name and last_name
+        if (!req.url_params.get("first_name")) {
+            return createErrorResponse(400, "Missing required query parameter: first_name", request_id);
+        }
+        if (!req.url_params.get("last_name")) {
+            return createErrorResponse(400, "Missing required query parameter: last_name", request_id);
+        }
+
+        first_name = req.url_params.get("first_name");
+        last_name = req.url_params.get("last_name");
+
+        if (first_name.empty()) {
+            return createErrorResponse(400, "Query parameter first_name cannot be empty", request_id);
+        }
+
+        if (last_name.empty()) {
+            return createErrorResponse(400, "Query parameter last_name cannot be empty", request_id);
+        }
+
+        // Use database to search users
+        auto users = db_->searchUsers(first_name, last_name);
+
+        // Sort users by id ascending (though database should already do ordered output by id)
+        std::sort(users.begin(), users.end(), [](const User& a, const User& b) {
+            return a.getId() < b.getId();
+        });
+
+        nlohmann::json response = nlohmann::json::array();
+        for (const auto& user : users) {
+            response.push_back(user.toJson());
+        }
+
+        auto crow_response = createSuccessResponse(response);
+        logResponse(crow_response, "/user/search", request_id);
+        return crow_response;
+
+    } catch (const std::exception& e) {
+        return handleInternalError(e, request_id);
+    }
 }
 
 } // namespace SocialNetwork

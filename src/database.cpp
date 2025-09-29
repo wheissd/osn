@@ -165,12 +165,12 @@ std::vector<User> Database::searchUsers(const std::string& first_name, const std
 
         if (!first_name.empty()) {
             conditions.push_back("first_name ILIKE $" + std::to_string(params.size() + 1));
-            params.push_back("%" + first_name + "%");
+            params.push_back(first_name + "%");
         }
 
         if (!last_name.empty()) {
             conditions.push_back("second_name ILIKE $" + std::to_string(params.size() + 1));
-            params.push_back("%" + last_name + "%");
+            params.push_back(last_name + "%");
         }
 
         query += conditions[0];
@@ -178,7 +178,7 @@ std::vector<User> Database::searchUsers(const std::string& first_name, const std
             query += " AND " + conditions[1];
         }
 
-        query += " ORDER BY first_name, second_name LIMIT 100";
+        query += " ORDER BY id LIMIT 100";
 
         pqxx::result result;
         if (params.size() == 1) {

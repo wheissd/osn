@@ -37,6 +37,7 @@ private:
     crow::response handleLogin(const crow::request& req);
     crow::response handleRegister(const crow::request& req);
     crow::response handleGetUser(const crow::request& req, const std::string& user_id);
+    crow::response handleSearchUsers(const crow::request& req);
 
     // Middleware and utilities
     std::optional<std::string> extractBearerToken(const crow::request& req);
