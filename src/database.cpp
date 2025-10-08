@@ -7,27 +7,28 @@
 #include <iomanip>
 #include <fstream>
 #include <stdexcept>
+#include <mutex>
+#include <condition_variable>
+#include <mutex>
+#include <condition_variable>
 
 namespace SocialNetwork {
 
-Database::Database(const std::string& connection_string)
-    : connection_string_(connection_string) {
-    initializeConnection();
+Database::Database(const std::string& connection_string, size_t pool_size)
+    : connection_string_(connection_string), pool_size_(pool_size) {
+    initializePool();
     runMigrations();
 }
 
-void Database::initializeConnection() {
-    try {
-        conn_ = std::make_unique<pqxx::connection>(connection_string_);
-        if (!conn_->is_open()) {
-            throw std::runtime_error("Failed to open database connection");
-        }
-        std::cout << "Database connection established successfully" << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "Database connection failed: " << e.what() << std::endl;
-        throw;
-    }
+Database::~Database() {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    // Just clear the pool and connection usage vectors,
+    // unique_ptr destructors will clean up connections correctly.
+    connection_pool_.clear();
+    connection_in_use_.clear();
 }
+
+
 
 std::string Database::createUser(const User& user, const std::string& password) {
     if (!user.isValid()) {
@@ -38,8 +39,9 @@ std::string Database::createUser(const User& user, const std::string& password) 
         throw std::invalid_argument("Password must be at least 6 characters long");
     }
 
+    pqxx::connection& conn = acquireConnection();
     try {
-        pqxx::work txn(*conn_);
+        pqxx::work txn(conn);
 
         std::string password_hash = hashPassword(password);
 
@@ -60,12 +62,15 @@ std::string Database::createUser(const User& user, const std::string& password) 
 
         std::string user_id = result[0][0].as<std::string>();
         txn.commit();
+        releaseConnection(conn);
 
         return user_id;
     } catch (const pqxx::sql_error& e) {
+        releaseConnection(conn);
         std::cerr << "SQL error in createUser: " << e.what() << std::endl;
         throw std::runtime_error("Database error while creating user");
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error in createUser: " << e.what() << std::endl;
         throw;
     }
@@ -76,14 +81,17 @@ std::optional<User> Database::getUser(const std::string& user_id) {
         return std::nullopt;
     }
 
+    pqxx::connection& conn = acquireConnection();
     try {
-        pqxx::nontransaction ntxn(*conn_);
+        pqxx::nontransaction ntxn(conn);
 
         pqxx::result result = ntxn.exec_params(
             "SELECT id, first_name, second_name, birthdate, biography, city "
             "FROM users WHERE id = $1",
             user_id
         );
+
+        releaseConnection(conn);
 
         if (result.empty()) {
             return std::nullopt;
@@ -101,9 +109,11 @@ std::optional<User> Database::getUser(const std::string& user_id) {
 
         return user;
     } catch (const pqxx::sql_error& e) {
+        releaseConnection(conn);
         std::cerr << "SQL error in getUser: " << e.what() << std::endl;
         return std::nullopt;
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error in getUser: " << e.what() << std::endl;
         return std::nullopt;
     }
@@ -114,12 +124,13 @@ std::optional<std::string> Database::authenticateUser(const std::string& user_id
         return std::nullopt;
     }
 
+    pqxx::connection& conn = acquireConnection();
     try {
         std::string stored_hash;
 
         // First, get the password hash in a separate transaction scope
         {
-            pqxx::nontransaction ntxn(*conn_);
+            pqxx::nontransaction ntxn(conn);
 
             pqxx::result result = ntxn.exec_params(
                 "SELECT password_hash FROM users WHERE id = $1",
@@ -127,11 +138,14 @@ std::optional<std::string> Database::authenticateUser(const std::string& user_id
             );
 
             if (result.empty()) {
+                releaseConnection(conn);
                 return std::nullopt;
             }
 
             stored_hash = result[0]["password_hash"].as<std::string>();
         }
+
+        releaseConnection(conn);
 
         // Then verify password and create session if valid
         if (verifyPassword(password, stored_hash)) {
@@ -140,9 +154,11 @@ std::optional<std::string> Database::authenticateUser(const std::string& user_id
 
         return std::nullopt;
     } catch (const pqxx::sql_error& e) {
+        releaseConnection(conn);
         std::cerr << "SQL error in authenticateUser: " << e.what() << std::endl;
         return std::nullopt;
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error in authenticateUser: " << e.what() << std::endl;
         return std::nullopt;
     }
@@ -155,8 +171,10 @@ std::vector<User> Database::searchUsers(const std::string& first_name, const std
         return users;
     }
 
+    pqxx::connection& conn = acquireConnection();
+
     try {
-        pqxx::nontransaction ntxn(*conn_);
+        pqxx::nontransaction ntxn(conn);
 
         std::string query = "SELECT id, first_name, second_name, birthdate, biography, city "
                            "FROM users WHERE ";
@@ -164,12 +182,12 @@ std::vector<User> Database::searchUsers(const std::string& first_name, const std
         std::vector<std::string> params;
 
         if (!first_name.empty()) {
-            conditions.push_back("first_name ILIKE $" + std::to_string(params.size() + 1));
+            conditions.push_back("first_name LIKE $" + std::to_string(params.size() + 1));
             params.push_back(first_name + "%");
         }
 
         if (!last_name.empty()) {
-            conditions.push_back("second_name ILIKE $" + std::to_string(params.size() + 1));
+            conditions.push_back("second_name LIKE $" + std::to_string(params.size() + 1));
             params.push_back(last_name + "%");
         }
 
@@ -198,20 +216,19 @@ std::vector<User> Database::searchUsers(const std::string& first_name, const std
             );
             users.push_back(user);
         }
-
-        return users;
-    } catch (const pqxx::sql_error& e) {
-        std::cerr << "SQL error in searchUsers: " << e.what() << std::endl;
-        return users;
-    } catch (const std::exception& e) {
-        std::cerr << "Error in searchUsers: " << e.what() << std::endl;
-        return users;
+    } catch (...) {
+        releaseConnection(conn);
+        throw;
     }
+
+    releaseConnection(conn);
+    return users;
 }
 
 std::string Database::createSession(const std::string& user_id) {
+    pqxx::connection& conn = acquireConnection();
     try {
-        pqxx::work txn(*conn_);
+        pqxx::work txn(conn);
 
         // Clean up expired sessions for this user first
         txn.exec_params(
@@ -227,17 +244,21 @@ std::string Database::createSession(const std::string& user_id) {
         );
 
         if (result.empty()) {
+            releaseConnection(conn);
             throw std::runtime_error("Failed to create session");
         }
 
         std::string token = result[0]["token"].as<std::string>();
         txn.commit();
+        releaseConnection(conn);
 
         return token;
     } catch (const pqxx::sql_error& e) {
+        releaseConnection(conn);
         std::cerr << "SQL error in createSession: " << e.what() << std::endl;
         throw std::runtime_error("Database error while creating session");
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error in createSession: " << e.what() << std::endl;
         throw;
     }
@@ -248,13 +269,16 @@ std::optional<std::string> Database::validateSession(const std::string& token) {
         return std::nullopt;
     }
 
+    pqxx::connection& conn = acquireConnection();
     try {
-        pqxx::nontransaction ntxn(*conn_);
+        pqxx::nontransaction ntxn(conn);
 
         pqxx::result result = ntxn.exec_params(
             "SELECT user_id FROM sessions WHERE token = $1 AND expires_at > CURRENT_TIMESTAMP",
             token
         );
+
+        releaseConnection(conn);
 
         if (result.empty()) {
             return std::nullopt;
@@ -262,47 +286,54 @@ std::optional<std::string> Database::validateSession(const std::string& token) {
 
         return result[0]["user_id"].as<std::string>();
     } catch (const pqxx::sql_error& e) {
+        releaseConnection(conn);
         std::cerr << "SQL error in validateSession: " << e.what() << std::endl;
         return std::nullopt;
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error in validateSession: " << e.what() << std::endl;
         return std::nullopt;
     }
 }
 
 void Database::deleteSession(const std::string& token) {
+    pqxx::connection& conn = acquireConnection();
     try {
-        pqxx::work txn(*conn_);
+        pqxx::work txn(conn);
         txn.exec_params("DELETE FROM sessions WHERE token = $1", token);
         txn.commit();
+        releaseConnection(conn);
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error in deleteSession: " << e.what() << std::endl;
     }
 }
 
 void Database::cleanupExpiredSessions() {
+    pqxx::connection& conn = acquireConnection();
     try {
-        pqxx::work txn(*conn_);
+        pqxx::work txn(conn);
         txn.exec("DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP");
         txn.commit();
+        releaseConnection(conn);
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error in cleanupExpiredSessions: " << e.what() << std::endl;
     }
 }
 
 bool Database::isConnected() const {
-    return conn_ && conn_->is_open();
+    // pool_mutex_ declared as mutable to allow locking in const methods.
+    std::unique_lock<std::mutex> lock(const_cast<std::mutex&>(pool_mutex_));
+    for (const auto& conn : connection_pool_) {
+        if (!conn->is_open()) {
+            return false;
+        }
+    }
+    return true;
 }
 
-void Database::reconnect() {
-    try {
-        conn_.reset();
-        initializeConnection();
-    } catch (const std::exception& e) {
-        std::cerr << "Failed to reconnect to database: " << e.what() << std::endl;
-        throw;
-    }
-}
+
 
 std::string Database::hashPassword(const std::string& password) {
     // Generate random salt
@@ -402,10 +433,13 @@ bool Database::verifyPassword(const std::string& password, const std::string& ha
 }
 
 void Database::runMigrations() {
+    pqxx::connection& conn = acquireConnection();
+
     try {
         // Check if we need to run migrations
         if (tableExists("users")) {
             std::cout << "Database tables already exist, skipping migrations" << std::endl;
+            releaseConnection(conn);
             return;
         }
 
@@ -415,6 +449,7 @@ void Database::runMigrations() {
         std::ifstream migration_file("migrations/001_create_tables.sql");
         if (!migration_file.is_open()) {
             std::cerr << "Warning: Could not open migration file, assuming database is already set up" << std::endl;
+            releaseConnection(conn);
             return;
         }
 
@@ -422,30 +457,106 @@ void Database::runMigrations() {
         migration_content << migration_file.rdbuf();
         migration_file.close();
 
-        pqxx::work txn(*conn_);
+        pqxx::work txn(conn);
         txn.exec(migration_content.str());
         txn.commit();
 
         std::cout << "Database migrations completed successfully" << std::endl;
+        releaseConnection(conn);
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error running migrations: " << e.what() << std::endl;
         throw;
     }
 }
 
 bool Database::tableExists(const std::string& table_name) {
+    pqxx::connection& conn = acquireConnection();
+
     try {
-        pqxx::nontransaction ntxn(*conn_);
+        pqxx::nontransaction ntxn(conn);
         pqxx::result result = ntxn.exec_params(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
             "WHERE table_schema = 'public' AND table_name = $1)",
             table_name
         );
 
+        releaseConnection(conn);
         return !result.empty() && result[0][0].as<bool>();
     } catch (const std::exception& e) {
+        releaseConnection(conn);
         std::cerr << "Error checking if table exists: " << e.what() << std::endl;
         return false;
+    }
+}
+
+pqxx::connection& Database::acquireConnection() {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    pool_cv_.wait(lock, [this] {
+        for (bool in_use : connection_in_use_) {
+            if (!in_use) return true;
+        }
+        return false;
+    });
+
+    for (size_t i = 0; i < pool_size_; ++i) {
+        if (!connection_in_use_[i]) {
+            connection_in_use_[i] = true;
+            pqxx::connection& conn = *connection_pool_[i];
+
+            if (!conn.is_open()) {
+                // Destroy and recreate the connection instead of reconnectConnection call
+                try {
+                    connection_pool_[i].reset(new pqxx::connection(connection_string_));
+                    if (!connection_pool_[i]->is_open()) {
+                        throw std::runtime_error("Failed to reestablish database connection");
+                    }
+                } catch (const std::exception& e) {
+                    connection_in_use_[i] = false;
+                    pool_cv_.notify_one();
+                    throw;
+                }
+                return *connection_pool_[i];
+            }
+
+            return conn;
+        }
+    }
+
+    throw std::runtime_error("Failed to acquire database connection from pool");
+}
+
+void Database::releaseConnection(pqxx::connection& conn) {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    for (size_t i = 0; i < pool_size_; ++i) {
+        if (connection_pool_[i].get() == &conn) {
+            connection_in_use_[i] = false;
+            lock.unlock();
+            pool_cv_.notify_one();
+            return;
+        }
+    }
+    throw std::runtime_error("Released connection not found in pool");
+}
+
+void Database::reconnectConnection(pqxx::connection& conn) {
+    // This function should not do anything now because we cannot reassign pqxx::connection objects.
+    // Actual reconnection is managed by destroying and recreating unique_ptr in the pool.
+    // So we leave it empty or remove calls to this method from acquireConnection.
+}
+
+void Database::initializePool() {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    connection_pool_.clear();
+    connection_in_use_.clear();
+
+    for (size_t i = 0; i < pool_size_; ++i) {
+        auto conn = std::make_unique<pqxx::connection>(connection_string_);
+        if (!conn->is_open()) {
+            throw std::runtime_error("Failed to open database connection in pool");
+        }
+        connection_pool_.push_back(std::move(conn));
+        connection_in_use_.push_back(false);
     }
 }
 

@@ -5,14 +5,16 @@
 #include <optional>
 #include <vector>
 #include <memory>
+#include <mutex>
+#include <condition_variable>
 #include "user.h"
 
 namespace SocialNetwork {
 
 class Database {
 public:
-    explicit Database(const std::string& connection_string);
-    ~Database() = default;
+    explicit Database(const std::string& connection_string, size_t pool_size = 10);
+    ~Database();
 
     // Disable copy constructor and assignment
     Database(const Database&) = delete;
@@ -32,18 +34,28 @@ public:
 
     // Connection management
     bool isConnected() const;
-    void reconnect();
 
 private:
     std::string connection_string_;
-    std::unique_ptr<pqxx::connection> conn_;
+
+    // Pool of connections
+    size_t pool_size_;
+    std::vector<std::unique_ptr<pqxx::connection>> connection_pool_;
+    std::vector<bool> connection_in_use_;
+    std::mutex pool_mutex_;
+    std::condition_variable pool_cv_;
 
     // Helper methods
-    void initializeConnection();
+    pqxx::connection& acquireConnection();
+    void releaseConnection(pqxx::connection& conn);
+
     std::string hashPassword(const std::string& password);
     bool verifyPassword(const std::string& password, const std::string& hash);
     void runMigrations();
     bool tableExists(const std::string& table_name);
+
+    void initializePool();
+    void reconnectConnection(pqxx::connection& conn);
 };
 
 } // namespace SocialNetwork

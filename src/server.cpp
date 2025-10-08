@@ -380,30 +380,53 @@ bool Server::hasRequiredFields(const nlohmann::json& json, const std::vector<std
     return true;
 }
 
+
+// Utility to decode percent-encoded URL components
+static std::string urlDecode(const std::string& value) {
+    std::string result;
+    result.reserve(value.size());
+
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '%' && i + 2 < value.size()) {
+            std::string hex_str = value.substr(i + 1, 2);
+            char decoded_char = static_cast<char>(std::stoi(hex_str, nullptr, 16));
+            result += decoded_char;
+            i += 2;
+        } else if (value[i] == '+') {
+            result += ' ';
+        } else {
+            result += value[i];
+        }
+    }
+
+    return result;
+}
+
+
 crow::response Server::handleSearchUsers(const crow::request& req) {
     std::string request_id = generateRequestId();
 
     try {
-        auto url_params = crow::query_string(req.url_params);
+        // Get the raw query parameters from the request URL
+        const auto& url_params = req.url_params;
 
-        std::string first_name;
-        std::string last_name;
+        const char* first_name_raw = url_params.get("first_name");
+        const char* last_name_raw = url_params.get("last_name");
 
-        // Extract and validate query parameters first_name and last_name
-        if (!req.url_params.get("first_name")) {
+        if (!first_name_raw) {
             return createErrorResponse(400, "Missing required query parameter: first_name", request_id);
         }
-        if (!req.url_params.get("last_name")) {
+        if (!last_name_raw) {
             return createErrorResponse(400, "Missing required query parameter: last_name", request_id);
         }
 
-        first_name = req.url_params.get("first_name");
-        last_name = req.url_params.get("last_name");
+        // URL decode parameters to handle Cyrillic and other UTF-8 characters properly
+        std::string first_name = urlDecode(first_name_raw);
+        std::string last_name = urlDecode(last_name_raw);
 
         if (first_name.empty()) {
             return createErrorResponse(400, "Query parameter first_name cannot be empty", request_id);
         }
-
         if (last_name.empty()) {
             return createErrorResponse(400, "Query parameter last_name cannot be empty", request_id);
         }
@@ -411,7 +434,7 @@ crow::response Server::handleSearchUsers(const crow::request& req) {
         // Use database to search users
         auto users = db_->searchUsers(first_name, last_name);
 
-        // Sort users by id ascending (though database should already do ordered output by id)
+        // Sort users by id ascending (db query orders by id but we ensure sorting)
         std::sort(users.begin(), users.end(), [](const User& a, const User& b) {
             return a.getId() < b.getId();
         });
@@ -424,8 +447,8 @@ crow::response Server::handleSearchUsers(const crow::request& req) {
         auto crow_response = createSuccessResponse(response);
         logResponse(crow_response, "/user/search", request_id);
         return crow_response;
-
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         return handleInternalError(e, request_id);
     }
 }

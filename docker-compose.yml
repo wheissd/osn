@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: socialnetwork
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_PASSWORD: your_db_password
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -33,7 +33,7 @@ services:
       DB_PORT: 5432
       DB_NAME: socialnetwork
       DB_USER: postgres
-      DB_PASSWORD: postgres_password
+      DB_PASSWORD: your_db_password
       SERVER_PORT: 8080
     ports:
       - "8080:8080"
